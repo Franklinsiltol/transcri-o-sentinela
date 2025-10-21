@@ -1,256 +1,221 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Automação Transcrição Drive → Sheets</title>
+    <title>Automação Transcrição</title>
     <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.6.0"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; max-width: 1000px; }
-        .container { margin: 0 auto; }
-        .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
-        button { background: #4285f4; color: white; border: none; padding: 10px 20px; margin: 5px; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #3367d6; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
-        .progress { background: #f5f5f5; padding: 10px; border-radius: 4px; margin: 10px 0; }
-        .file-item { padding: 8px; margin: 5px 0; background: #f9f9f9; border-left: 4px solid #4285f4; }
-        .error { border-left-color: #ea4335; background: #fce8e6; }
-        .success { border-left-color: #34a853; background: #e6f4ea; }
-        .log { max-height: 300px; overflow-y: auto; background: #000; color: #0f0; padding: 10px; font-family: monospace; }
+        /* Seus estilos aqui */
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎯 Automação: Drive → Whisper → Sheets</h1>
+        <h1>🎯 Automação Drive → Sheets</h1>
         
-        <!-- Configuração do Google Drive -->
+        <!-- Configuração do GAS -->
         <div class="section">
-            <h2>📁 Configuração do Google Drive</h2>
-            <p>Cole a URL da pasta do Drive com os áudios:</p>
-            <input type="text" id="driveFolderUrl" placeholder="https://drive.google.com/drive/folders/..." style="width: 100%; padding: 8px; margin: 10px 0;">
-            <button onclick="listarArquivosDrive()">Listar Áudios da Pasta</button>
-            
-            <div id="listaArquivos" style="margin-top: 15px;"></div>
+            <h3>🔗 Configuração do Google Apps Script</h3>
+            <input type="text" id="gasUrl" placeholder="Cole a URL do seu Google Apps Script" style="width: 80%; padding: 8px;">
+            <button onclick="testarConexao()">Testar Conexão</button>
         </div>
 
-        <!-- Configuração do Google Sheets -->
+        <!-- Upload de arquivos -->
         <div class="section">
-            <h2>📊 Configuração do Google Sheets</h2>
-            <p>URL da Planilha:</p>
-            <input type="text" id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/..." style="width: 100%; padding: 8px; margin: 10px 0;">
-            <small>Certifique-se de que o Google Apps Script está configurado</small>
+            <h3>📁 Upload de Áudios</h3>
+            <input type="file" id="audioFiles" multiple accept="audio/*" onchange="listarArquivos()">
+            <div id="listaArquivos" style="margin-top: 10px;"></div>
         </div>
 
         <!-- Controles -->
         <div class="section">
-            <h2>⚙️ Controles</h2>
-            <button onclick="iniciarProcessamento()" id="btnProcessar">Iniciar Processamento em Lote</button>
-            <button onclick="pararProcessamento()" id="btnParar" disabled>Parar Processamento</button>
-            <button onclick="limparLog()">Limpar Log</button>
+            <button onclick="iniciarProcessamento()" id="btnProcessar">🚀 Processar Áudios</button>
+            <div id="progresso"></div>
         </div>
 
-        <!-- Progresso -->
+        <!-- Resultados -->
         <div class="section">
-            <h2>📈 Progresso</h2>
-            <div class="progress">
-                <div id="progressoTexto">Pronto para iniciar</div>
-                <div id="progressoBar" style="width: 0%; height: 20px; background: #4285f4; transition: width 0.3s;"></div>
-            </div>
-        </div>
-
-        <!-- Logs -->
-        <div class="section">
-            <h2>📝 Log de Execução</h2>
-            <div id="log" class="log"></div>
+            <h3>📊 Resultados</h3>
+            <div id="resultados"></div>
         </div>
     </div>
 
     <script>
-        // Variáveis globais
+        // Configuração
         let modelo = null;
-        let processando = false;
-        let arquivosParaProcessar = [];
-        let arquivosProcessados = 0;
-        let googleScriptURL = 'https://script.google.com/macros/s/SEU_SCRIPT_ID/exec'; // Substitua pelo seu
+        let arquivosSelecionados = [];
 
-        // Log system
-        function log(mensagem, tipo = 'info') {
-            const logDiv = document.getElementById('log');
-            const timestamp = new Date().toLocaleTimeString();
-            const color = tipo === 'error' ? '#ff4444' : tipo === 'success' ? '#44ff44' : '#4488ff';
-            logDiv.innerHTML += `<span style="color: ${color}">[${timestamp}] ${mensagem}</span><br>`;
-            logDiv.scrollTop = logDiv.scrollHeight;
+        // Listar arquivos selecionados
+        function listarArquivos() {
+            const files = document.getElementById('audioFiles').files;
+            arquivosSelecionados = Array.from(files);
+            
+            const lista = document.getElementById('listaArquivos');
+            lista.innerHTML = '<h4>Arquivos selecionados:</h4>';
+            
+            arquivosSelecionados.forEach((file, index) => {
+                lista.innerHTML += `
+                    <div style="padding: 5px; border-left: 3px solid #4285f4; margin: 5px 0; background: #f8f9fa;">
+                        ${index + 1}. ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)
+                    </div>
+                `;
+            });
         }
 
-        function limparLog() {
-            document.getElementById('log').innerHTML = '';
+        // Testar conexão com GAS
+        async function testarConexao() {
+            const gasUrl = document.getElementById('gasUrl').value;
+            if (!gasUrl) return alert('Cole a URL do Google Apps Script');
+            
+            try {
+                const response = await fetch(gasUrl);
+                const data = await response.json();
+                alert('✅ Conexão com Google Apps Script estabelecida!');
+            } catch (error) {
+                alert('❌ Erro na conexão: ' + error.message);
+            }
         }
 
         // Carregar modelo Whisper
         async function carregarModelo() {
             if (!modelo) {
-                log('Carregando modelo Whisper... (pode demorar alguns minutos na primeira vez)');
-                try {
-                    modelo = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small');
-                    log('✅ Modelo Whisper carregado com sucesso!', 'success');
-                } catch (error) {
-                    log(`❌ Erro ao carregar modelo: ${error.message}`, 'error');
-                    throw error;
-                }
+                console.log('Carregando modelo Whisper...');
+                modelo = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small');
+                console.log('Modelo carregado!');
             }
             return modelo;
         }
 
-        // Listar arquivos do Drive (simulação - na prática você precisaria da API)
-        async function listarArquivosDrive() {
-            const folderUrl = document.getElementById('driveFolderUrl').value;
-            if (!folderUrl) {
-                alert('Cole a URL da pasta do Drive primeiro');
-                return;
-            }
-
-            log('Buscando arquivos do Drive...');
-            
-            // SIMULAÇÃO - Na prática você usaria a Google Drive API
-            // Esta é uma simulação para demonstração
-            arquivosParaProcessar = [
-                { nome: 'entrevista_01.mp3', url: 'https://exemplo.com/audio1.mp3' },
-                { nome: 'reuniao_02.wav', url: 'https://exemplo.com/audio2.wav' },
-                { nome: 'gravacao_03.m4a', url: 'https://exemplo.com/audio3.m4a' }
-            ];
-
-            const listaDiv = document.getElementById('listaArquivos');
-            listaDiv.innerHTML = '<h3>Arquivos encontrados:</h3>';
-            
-            arquivosParaProcessar.forEach((arquivo, index) => {
-                listaDiv.innerHTML += `
-                    <div class="file-item">
-                        <strong>${index + 1}.</strong> ${arquivo.nome}
-                    </div>
-                `;
-            });
-
-            log(`✅ Encontrados ${arquivosParaProcessar.length} arquivos de áudio`, 'success');
-        }
-
-        // Processar um arquivo individual
-        async function processarArquivo(arquivo) {
+        // Processar áudio individual
+        async function processarAudio(arquivo) {
             try {
-                log(`Processando: ${arquivo.nome}`);
-                
-                // Na prática, você baixaria o arquivo do Drive
-                // Aqui estamos simulando com um arquivo local
-                const response = await fetch(arquivo.url);
-                const blob = await response.blob();
-                
-                // Transcrever com Whisper
                 const transcriber = await carregarModelo();
-                const output = await transcriber(URL.createObjectURL(blob), {
+                const output = await transcriber(URL.createObjectURL(arquivo), {
                     chunk_length_s: 30,
                     stride_length_s: 5,
                     language: 'portuguese'
                 });
 
-                const transcricao = output.text;
-                log(`✅ Transcrição concluída: ${arquivo.nome}`, 'success');
-
-                // Salvar no Google Sheets
-                await salvarNoSheets(arquivo.nome, transcricao);
-                
-                return { sucesso: true, arquivo: arquivo.nome, transcricao };
-                
+                return {
+                    success: true,
+                    filename: arquivo.name,
+                    transcription: output.text,
+                    duration: output.duration || 0
+                };
             } catch (error) {
-                log(`❌ Erro ao processar ${arquivo.nome}: ${error.message}`, 'error');
-                return { sucesso: false, arquivo: arquivo.nome, erro: error.message };
+                return {
+                    success: false,
+                    filename: arquivo.name,
+                    error: error.message
+                };
             }
         }
 
-        // Salvar no Google Sheets via Apps Script
-        async function salvarNoSheets(nomeArquivo, transcricao) {
-            try {
-                const dados = {
-                    timestamp: new Date().toISOString(),
-                    arquivo: nomeArquivo,
-                    transcricao: transcricao
-                };
+        // Salvar no Sheets via GAS
+        async function salvarNoSheets(dados) {
+            const gasUrl = document.getElementById('gasUrl').value;
+            
+            const payload = {
+                timestamp: new Date().toISOString(),
+                filename: dados.filename,
+                transcription: dados.transcription,
+                duration: dados.duration
+            };
 
-                const response = await fetch(googleScriptURL, {
+            try {
+                const response = await fetch(gasUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(dados)
+                    body: JSON.stringify(payload)
                 });
 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                log(`📊 Salvo no Sheets: ${nomeArquivo}`, 'success');
-                return true;
-                
+                return await response.json();
             } catch (error) {
-                log(`❌ Erro ao salvar no Sheets: ${error.message}`, 'error');
-                return false;
+                throw new Error('Erro ao salvar no Sheets: ' + error.message);
             }
         }
 
         // Processamento em lote
         async function iniciarProcessamento() {
-            if (arquivosParaProcessar.length === 0) {
-                alert('Liste os arquivos do Drive primeiro!');
+            if (arquivosSelecionados.length === 0) {
+                alert('Selecione os arquivos de áudio primeiro!');
                 return;
             }
 
-            processando = true;
-            arquivosProcessados = 0;
-            
-            document.getElementById('btnProcessar').disabled = true;
-            document.getElementById('btnParar').disabled = false;
-
-            log('🚀 INICIANDO PROCESSAMENTO EM LOTE');
-            
-            for (let i = 0; i < arquivosParaProcessar.length && processando; i++) {
-                const arquivo = arquivosParaProcessar[i];
-                
-                // Atualizar progresso
-                const progresso = ((i + 1) / arquivosParaProcessar.length) * 100;
-                document.getElementById('progressoBar').style.width = `${progresso}%`;
-                document.getElementById('progressoTexto').innerHTML = 
-                    `Processando ${i + 1} de ${arquivosParaProcessar.length}: ${arquivo.nome}`;
-
-                // Processar arquivo
-                await processarArquivo(arquivo);
-                arquivosProcessados++;
+            const gasUrl = document.getElementById('gasUrl').value;
+            if (!gasUrl) {
+                alert('Configure a URL do Google Apps Script primeiro!');
+                return;
             }
 
-            // Finalização
-            if (processando) {
-                log('🎉 PROCESSAMENTO CONCLUÍDO!', 'success');
-                document.getElementById('progressoTexto').innerHTML = 
-                    `Concluído: ${arquivosProcessados} arquivos processados`;
-            } else {
-                log('⏸️ PROCESSAMENTO INTERROMPIDO', 'error');
-            }
+            const btnProcessar = document.getElementById('btnProcessar');
+            const progresso = document.getElementById('progresso');
+            const resultados = document.getElementById('resultados');
 
-            document.getElementById('btnProcessar').disabled = false;
-            document.getElementById('btnParar').disabled = true;
-            processando = false;
-        }
+            btnProcessar.disabled = true;
+            progresso.innerHTML = '<p>🔄 Iniciando processamento...</p>';
+            resultados.innerHTML = '';
 
-        function pararProcessamento() {
-            processando = false;
-            log('Solicitada interrupção do processamento...');
-        }
+            let processados = 0;
+            let sucessos = 0;
+            let erros = 0;
 
-        // Upload alternativo para arquivos locais
-        document.getElementById('driveFolderUrl').addEventListener('paste', async (event) => {
-            // Simulação de extração de ID da pasta
-            setTimeout(() => {
-                const url = event.target.value;
-                if (url.includes('drive.google.com')) {
-                    log('URL do Drive detectada. Clique em "Listar Áudios" para continuar.');
+            for (const arquivo of arquivosSelecionados) {
+                progresso.innerHTML = `
+                    <p>📊 Progresso: ${processados + 1}/${arquivosSelecionados.length}</p>
+                    <p>🔄 Processando: ${arquivo.name}</p>
+                `;
+
+                try {
+                    // Transcrever áudio
+                    const resultado = await processarAudio(arquivo);
+                    
+                    if (resultado.success) {
+                        // Salvar no Sheets
+                        await salvarNoSheets(resultado);
+                        sucessos++;
+                        
+                        resultados.innerHTML += `
+                            <div style="color: green; margin: 10px 0; padding: 10px; border-left: 3px solid green;">
+                                ✅ <strong>${arquivo.name}</strong><br>
+                                ${resultado.transcription.substring(0, 100)}...
+                            </div>
+                        `;
+                    } else {
+                        erros++;
+                        resultados.innerHTML += `
+                            <div style="color: red; margin: 10px 0; padding: 10px; border-left: 3px solid red;">
+                                ❌ <strong>${arquivo.name}</strong><br>
+                                Erro: ${resultado.error}
+                            </div>
+                        `;
+                    }
+                } catch (error) {
+                    erros++;
+                    resultados.innerHTML += `
+                        <div style="color: red; margin: 10px 0; padding: 10px; border-left: 3px solid red;">
+                            ❌ <strong>${arquivo.name}</strong><br>
+                            Erro: ${error.message}
+                        </div>
+                    `;
                 }
-            }, 100);
-        });
+
+                processados++;
+            }
+
+            progresso.innerHTML = `
+                <div style="background: #e6f4ea; padding: 15px; border-radius: 5px;">
+                    <h3>🎉 Processamento Concluído!</h3>
+                    <p>✅ Sucessos: ${sucessos}</p>
+                    <p>❌ Erros: ${erros}</p>
+                    <p>📊 Total: ${processados}</p>
+                </div>
+            `;
+
+            btnProcessar.disabled = false;
+        }
     </script>
 </body>
 </html>
