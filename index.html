@@ -1,166 +1,256 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Transcritor Avançado</title>
+    <title>Automação Transcrição Drive → Sheets</title>
     <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.6.0"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .container { max-width: 800px; margin: 0 auto; }
-        .upload-area { 
-            border: 2px dashed #ccc; 
-            padding: 40px; 
-            text-align: center; 
-            margin: 20px 0;
-            border-radius: 10px;
-        }
-        .resultado { 
-            background: #f5f5f5; 
-            padding: 20px; 
-            border-radius: 5px; 
-            margin: 20px 0;
-            white-space: pre-wrap;
-        }
-        button { 
-            background: #007cba; 
-            color: white; 
-            border: none; 
-            padding: 10px 20px; 
-            margin: 5px;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        button:hover { background: #005a87; }
+        body { font-family: Arial, sans-serif; margin: 40px; max-width: 1000px; }
+        .container { margin: 0 auto; }
+        .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        button { background: #4285f4; color: white; border: none; padding: 10px 20px; margin: 5px; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #3367d6; }
         button:disabled { background: #ccc; cursor: not-allowed; }
+        .progress { background: #f5f5f5; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .file-item { padding: 8px; margin: 5px 0; background: #f9f9f9; border-left: 4px solid #4285f4; }
+        .error { border-left-color: #ea4335; background: #fce8e6; }
+        .success { border-left-color: #34a853; background: #e6f4ea; }
+        .log { max-height: 300px; overflow-y: auto; background: #000; color: #0f0; padding: 10px; font-family: monospace; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎤 Transcritor de Áudio Online</h1>
+        <h1>🎯 Automação: Drive → Whisper → Sheets</h1>
         
-        <div class="upload-area">
-            <input type="file" id="audioFile" accept="audio/*" style="display: none;">
-            <button onclick="document.getElementById('audioFile').click()">
-                Selecionar Arquivo de Áudio
-            </button>
-            <p>ou arraste e solte aqui</p>
-            <div id="arquivoSelecionado"></div>
+        <!-- Configuração do Google Drive -->
+        <div class="section">
+            <h2>📁 Configuração do Google Drive</h2>
+            <p>Cole a URL da pasta do Drive com os áudios:</p>
+            <input type="text" id="driveFolderUrl" placeholder="https://drive.google.com/drive/folders/..." style="width: 100%; padding: 8px; margin: 10px 0;">
+            <button onclick="listarArquivosDrive()">Listar Áudios da Pasta</button>
+            
+            <div id="listaArquivos" style="margin-top: 15px;"></div>
         </div>
 
-        <button onclick="transcreverAudio()" id="btnTranscrever">Transcrever Áudio</button>
-        
-        <div id="loading" style="display: none;">
-            <p>⏳ Processando... Isso pode levar alguns minutos.</p>
+        <!-- Configuração do Google Sheets -->
+        <div class="section">
+            <h2>📊 Configuração do Google Sheets</h2>
+            <p>URL da Planilha:</p>
+            <input type="text" id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/..." style="width: 100%; padding: 8px; margin: 10px 0;">
+            <small>Certifique-se de que o Google Apps Script está configurado</small>
         </div>
 
-        <div id="resultado" class="resultado"></div>
+        <!-- Controles -->
+        <div class="section">
+            <h2>⚙️ Controles</h2>
+            <button onclick="iniciarProcessamento()" id="btnProcessar">Iniciar Processamento em Lote</button>
+            <button onclick="pararProcessamento()" id="btnParar" disabled>Parar Processamento</button>
+            <button onclick="limparLog()">Limpar Log</button>
+        </div>
 
-        <div id="botoesExportacao" style="display: none;">
-            <button onclick="exportarCSV()">📥 Download CSV</button>
-            <button onclick="salvarNoSheets()">📊 Salvar no Google Sheets</button>
-            <button onclick="copiarTexto()">📋 Copiar Texto</button>
+        <!-- Progresso -->
+        <div class="section">
+            <h2>📈 Progresso</h2>
+            <div class="progress">
+                <div id="progressoTexto">Pronto para iniciar</div>
+                <div id="progressoBar" style="width: 0%; height: 20px; background: #4285f4; transition: width 0.3s;"></div>
+            </div>
+        </div>
+
+        <!-- Logs -->
+        <div class="section">
+            <h2>📝 Log de Execução</h2>
+            <div id="log" class="log"></div>
         </div>
     </div>
 
     <script>
-        let transcricaoAtual = '';
-        let modeloCarregado = null;
+        // Variáveis globais
+        let modelo = null;
+        let processando = false;
+        let arquivosParaProcessar = [];
+        let arquivosProcessados = 0;
+        let googleScriptURL = 'https://script.google.com/macros/s/SEU_SCRIPT_ID/exec'; // Substitua pelo seu
 
-        // Configurar área de drag & drop
-        const uploadArea = document.querySelector('.upload-area');
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.style.borderColor = '#007cba';
-        });
-
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.style.borderColor = '#ccc';
-            const file = e.dataTransfer.files[0];
-            if (file && file.type.startsWith('audio/')) {
-                document.getElementById('audioFile').files = e.dataTransfer.files;
-                atualizarInterfaceArquivo(file.name);
-            }
-        });
-
-        document.getElementById('audioFile').addEventListener('change', (e) => {
-            if (e.target.files[0]) {
-                atualizarInterfaceArquivo(e.target.files[0].name);
-            }
-        });
-
-        function atualizarInterfaceArquivo(nome) {
-            document.getElementById('arquivoSelecionado').innerHTML = 
-                `<strong>Arquivo selecionado:</strong> ${nome}`;
+        // Log system
+        function log(mensagem, tipo = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = tipo === 'error' ? '#ff4444' : tipo === 'success' ? '#44ff44' : '#4488ff';
+            logDiv.innerHTML += `<span style="color: ${color}">[${timestamp}] ${mensagem}</span><br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
         }
 
+        function limparLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Carregar modelo Whisper
         async function carregarModelo() {
-            if (!modeloCarregado) {
-                modeloCarregado = await pipeline(
-                    'automatic-speech-recognition', 
-                    'Xenova/whisper-tiny'
-                );
+            if (!modelo) {
+                log('Carregando modelo Whisper... (pode demorar alguns minutos na primeira vez)');
+                try {
+                    modelo = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small');
+                    log('✅ Modelo Whisper carregado com sucesso!', 'success');
+                } catch (error) {
+                    log(`❌ Erro ao carregar modelo: ${error.message}`, 'error');
+                    throw error;
+                }
             }
-            return modeloCarregado;
+            return modelo;
         }
 
-        async function transcreverAudio() {
-            const file = document.getElementById('audioFile').files[0];
-            if (!file) {
-                alert('Por favor, selecione um arquivo de áudio.');
+        // Listar arquivos do Drive (simulação - na prática você precisaria da API)
+        async function listarArquivosDrive() {
+            const folderUrl = document.getElementById('driveFolderUrl').value;
+            if (!folderUrl) {
+                alert('Cole a URL da pasta do Drive primeiro');
                 return;
             }
 
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('btnTranscrever').disabled = true;
+            log('Buscando arquivos do Drive...');
+            
+            // SIMULAÇÃO - Na prática você usaria a Google Drive API
+            // Esta é uma simulação para demonstração
+            arquivosParaProcessar = [
+                { nome: 'entrevista_01.mp3', url: 'https://exemplo.com/audio1.mp3' },
+                { nome: 'reuniao_02.wav', url: 'https://exemplo.com/audio2.wav' },
+                { nome: 'gravacao_03.m4a', url: 'https://exemplo.com/audio3.m4a' }
+            ];
 
+            const listaDiv = document.getElementById('listaArquivos');
+            listaDiv.innerHTML = '<h3>Arquivos encontrados:</h3>';
+            
+            arquivosParaProcessar.forEach((arquivo, index) => {
+                listaDiv.innerHTML += `
+                    <div class="file-item">
+                        <strong>${index + 1}.</strong> ${arquivo.nome}
+                    </div>
+                `;
+            });
+
+            log(`✅ Encontrados ${arquivosParaProcessar.length} arquivos de áudio`, 'success');
+        }
+
+        // Processar um arquivo individual
+        async function processarArquivo(arquivo) {
             try {
+                log(`Processando: ${arquivo.nome}`);
+                
+                // Na prática, você baixaria o arquivo do Drive
+                // Aqui estamos simulando com um arquivo local
+                const response = await fetch(arquivo.url);
+                const blob = await response.blob();
+                
+                // Transcrever com Whisper
                 const transcriber = await carregarModelo();
-                const output = await transcriber(file, {
+                const output = await transcriber(URL.createObjectURL(blob), {
                     chunk_length_s: 30,
                     stride_length_s: 5,
+                    language: 'portuguese'
                 });
 
-                transcricaoAtual = output.text;
+                const transcricao = output.text;
+                log(`✅ Transcrição concluída: ${arquivo.nome}`, 'success');
+
+                // Salvar no Google Sheets
+                await salvarNoSheets(arquivo.nome, transcricao);
                 
-                document.getElementById('resultado').innerHTML = 
-                    `<h3>📝 Transcrição:</h3><p>${transcricaoAtual}</p>`;
-                document.getElementById('botoesExportacao').style.display = 'block';
+                return { sucesso: true, arquivo: arquivo.nome, transcricao };
                 
             } catch (error) {
-                console.error('Erro:', error);
-                document.getElementById('resultado').innerHTML = 
-                    `<p style="color: red;">Erro na transcrição: ${error.message}</p>`;
-            } finally {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('btnTranscrever').disabled = false;
+                log(`❌ Erro ao processar ${arquivo.nome}: ${error.message}`, 'error');
+                return { sucesso: false, arquivo: arquivo.nome, erro: error.message };
             }
         }
 
-        function exportarCSV() {
-            const csv = `Data,Hora,Transcrição\n"${new Date().toLocaleDateString()}","${new Date().toLocaleTimeString()}","${transcricaoAtual.replace(/"/g, '""')}"`;
-            downloadArquivo(csv, 'transcricao.csv', 'text/csv');
+        // Salvar no Google Sheets via Apps Script
+        async function salvarNoSheets(nomeArquivo, transcricao) {
+            try {
+                const dados = {
+                    timestamp: new Date().toISOString(),
+                    arquivo: nomeArquivo,
+                    transcricao: transcricao
+                };
+
+                const response = await fetch(googleScriptURL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(dados)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                log(`📊 Salvo no Sheets: ${nomeArquivo}`, 'success');
+                return true;
+                
+            } catch (error) {
+                log(`❌ Erro ao salvar no Sheets: ${error.message}`, 'error');
+                return false;
+            }
         }
 
-        function salvarNoSheets() {
-            // Implementar integração com Google Sheets
-            alert('Funcionalidade Google Sheets seria implementada aqui!');
+        // Processamento em lote
+        async function iniciarProcessamento() {
+            if (arquivosParaProcessar.length === 0) {
+                alert('Liste os arquivos do Drive primeiro!');
+                return;
+            }
+
+            processando = true;
+            arquivosProcessados = 0;
+            
+            document.getElementById('btnProcessar').disabled = true;
+            document.getElementById('btnParar').disabled = false;
+
+            log('🚀 INICIANDO PROCESSAMENTO EM LOTE');
+            
+            for (let i = 0; i < arquivosParaProcessar.length && processando; i++) {
+                const arquivo = arquivosParaProcessar[i];
+                
+                // Atualizar progresso
+                const progresso = ((i + 1) / arquivosParaProcessar.length) * 100;
+                document.getElementById('progressoBar').style.width = `${progresso}%`;
+                document.getElementById('progressoTexto').innerHTML = 
+                    `Processando ${i + 1} de ${arquivosParaProcessar.length}: ${arquivo.nome}`;
+
+                // Processar arquivo
+                await processarArquivo(arquivo);
+                arquivosProcessados++;
+            }
+
+            // Finalização
+            if (processando) {
+                log('🎉 PROCESSAMENTO CONCLUÍDO!', 'success');
+                document.getElementById('progressoTexto').innerHTML = 
+                    `Concluído: ${arquivosProcessados} arquivos processados`;
+            } else {
+                log('⏸️ PROCESSAMENTO INTERROMPIDO', 'error');
+            }
+
+            document.getElementById('btnProcessar').disabled = false;
+            document.getElementById('btnParar').disabled = true;
+            processando = false;
         }
 
-        function copiarTexto() {
-            navigator.clipboard.writeText(transcricaoAtual)
-                .then(() => alert('Texto copiado!'))
-                .catch(err => alert('Erro ao copiar: ' + err));
+        function pararProcessamento() {
+            processando = false;
+            log('Solicitada interrupção do processamento...');
         }
 
-        function downloadArquivo(conteudo, nome, tipo) {
-            const blob = new Blob([conteudo], { type: tipo });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = nome;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
+        // Upload alternativo para arquivos locais
+        document.getElementById('driveFolderUrl').addEventListener('paste', async (event) => {
+            // Simulação de extração de ID da pasta
+            setTimeout(() => {
+                const url = event.target.value;
+                if (url.includes('drive.google.com')) {
+                    log('URL do Drive detectada. Clique em "Listar Áudios" para continuar.');
+                }
+            }, 100);
+        });
     </script>
 </body>
 </html>
